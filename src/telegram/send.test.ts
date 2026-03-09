@@ -731,11 +731,11 @@ describe("sendMessageTelegram", () => {
     }
   });
 
-  it("retries on transient errors with retry_after", async () => {
+  it("retries sendMessage on safe pre-connect network errors", async () => {
     vi.useFakeTimers();
     const chatId = "123";
-    const err = Object.assign(new Error("429"), {
-      parameters: { retry_after: 0.5 },
+    const err = Object.assign(new Error("getaddrinfo ENOTFOUND"), {
+      code: "ENOTFOUND",
     });
     const sendMessage = vi
       .fn()
@@ -757,7 +757,7 @@ describe("sendMessageTelegram", () => {
 
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toEqual({ messageId: "1", chatId });
-    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(500);
+    expect(setTimeoutSpy.mock.calls[0]?.[1]).toBe(0);
     setTimeoutSpy.mockRestore();
     vi.useRealTimers();
   });
@@ -779,29 +779,26 @@ describe("sendMessageTelegram", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("retries when grammY network envelope message includes failed-after wording", async () => {
+  it("does not retry sendMessage on ambiguous grammY network envelope errors", async () => {
     const chatId = "123";
     const sendMessage = vi
       .fn()
       .mockRejectedValueOnce(
         new Error("Network request for 'sendMessage' failed after 1 attempts."),
-      )
-      .mockResolvedValueOnce({
-        message_id: 7,
-        chat: { id: chatId },
-      });
+      );
     const api = { sendMessage } as unknown as {
       sendMessage: typeof sendMessage;
     };
 
-    const result = await sendMessageTelegram(chatId, "hi", {
-      token: "tok",
-      api,
-      retry: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
-    });
+    await expect(
+      sendMessageTelegram(chatId, "hi", {
+        token: "tok",
+        api,
+        retry: { attempts: 2, minDelayMs: 0, maxDelayMs: 0, jitter: 0 },
+      }),
+    ).rejects.toThrow(/failed after 1 attempts/);
 
-    expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(result).toEqual({ messageId: "7", chatId });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("sends GIF media as animation", async () => {
